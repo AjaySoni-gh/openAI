@@ -3,6 +3,8 @@ import React, { useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Frame } from "@gptscript-ai/gptscript";
+import renderEventMessage from "@/lib/renderEventMessage";
 const recipePath= "public/stories";
 
 const RecipeWriter = () => {
@@ -16,6 +18,9 @@ const RecipeWriter = () => {
   const [runFinished, setRunFinished]= useState<boolean | null>(null);
   const [currentTool, SetCurrentTool]= useState("")
   const [recipe, setRecipe]= useState<string>("")
+const[ events, setEvents]= useState<Frame[]>([])
+
+
 
   async function runScript(){
        setRunStarted(false)
@@ -25,8 +30,53 @@ const RecipeWriter = () => {
         method:'POST',
         headers:{
           'Content-Type': 'application/json'},
-          body: JSON.stringify({ recipe, garnishing, path: recipePath})
+          body: JSON.stringify({recipe, garnishing, path: recipePath})
       })
+      if(response.ok && response.body){
+//code()
+console.log("started")
+const reader = response.body.getReader()
+const decoder= new TextDecoder();
+handleStream(reader, decoder);
+      }
+      else{
+        setRunFinished(true)
+        setRunStarted(false)
+        console.error("failed")
+      }
+  }
+  async function handleStream(reader: ReadableStreamDefaultReader<Uint8Array>, decoder: TextDecoder){
+    //stream frm api
+    while(true){
+      const {done, value}= await reader.read();
+      if (done) break;   
+      const chunk = decoder.decode(value, {stream: true})
+
+      const eventData = chunk.split("\n\n").filter((line) =>line.startsWith("event: ")).map((line)=> line.replace(/^event /,""));
+
+      eventData.forEach(data =>{
+        try { const parsedData=JSON.parse(data);
+          if(parsedData.type === "callProgress"){
+            setProgress(
+              parsedData.output[parsedData.output.length -1].content);
+              SetCurrentTool(parsedData.tool?.description || "");
+          } else if (parsedData.type ==="callStart"){
+            SetCurrentTool(parsedData.tool?.description || "" )
+          }
+          else if(parsedData.type ==="runFinish")
+          {
+            setRunFinished(true);
+            setRunStarted(false);
+          } else{
+            setEvents((prevEvents)=> [...prevEvents, parsedData])
+          }
+          
+        } catch (error) {
+          console.error("failed to parse JSON, error", error)
+          
+        }
+      })
+    }
   }
 
   return (
@@ -58,7 +108,7 @@ const RecipeWriter = () => {
           </Button>
       </section>
       <section className="flex-1 pb-5 mt-5">
-        <div className="flex flex-col-reverse w-full space-y-2 bg-grey-800 rounded-md trxt-gray-200 font-mono p-10 h-96 overflow-y-auto">
+        <div className="flex flex-col-reverse  bg-gray-500 w-full space-y-2 bg-grey-800 rounded-md trxt-gray-200 font-mono p-10 h-96 overflow-y-auto">
           <div>
             {runFinished === null &&(
               <>
@@ -75,6 +125,15 @@ const RecipeWriter = () => {
             </div>
           )}
           //render event
+          <div className="space-y-5">
+  {events.map((event, index) => (
+    <div key={index}>
+     <span className="mr-5">{">>"}</span>
+     {renderEventMessage(event)}
+    </div>
+  ))}
+</div>
+
             {runStarted && (
               <div>
                 <span className="mr-5 animate-in">
